@@ -1,0 +1,139 @@
+.draw-screen {
+  background-color: #ffffff;
+}
+
+.draw-screen h1 {
+  font-size: 2.5rem;
+  color: var(--primary);
+  margin-bottom: 1rem;
+}
+
+.instruction {
+  font-size: 1.2rem;
+  color: var(--text);
+  margin-bottom: 2rem;
+}
+
+.camera-container {
+  width: 90%;
+  max-width: 800px;
+  margin: 20px auto;
+  border: 4px dashed var(--secondary);
+  border-radius: 20px;
+  padding: 20px;
+  background-color: #f8f9fa;
+}
+
+.webcam-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.webcam {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.captured-image-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.captured-image-container img {
+  width: 100%;
+  max-width: 640px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.button-group {
+  display: flex;
+  gap: 15px;
+  margin-top: 10px;
+}
+
+.start-camera-button {
+  background-color: var(--primary);
+  font-size: 1.8rem;
+  margin: 20px;
+  padding: 20px 40px;
+  border-radius: 15px;
+}
+
+.capture-button {
+  background-color: var(--secondary);
+  font-size: 1.8rem;
+  margin: 10px;
+  padding: 15px 30px;
+}
+
+.retake-button {
+  background-color: var(--accent);
+  font-size: 1.2rem;
+}
+
+.next-button {
+  background-color: var(--success);
+  margin-top: 20px;
+  font-size: 1.4rem;
+  padding: 15px 40px;
+}
+
+.next-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.error-message {
+  color: #dc3545;
+  margin: 15px 0;
+  padding: 10px;
+  border-radius: 5px;
+  background-color: #ffe6e6;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  margin: 40px 0;
+  padding: 30px;
+  background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 50%, #fecfef 100%);
+  border-radius: 20px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.loading-container h2 {
+  color: #333;
+  font-size: 2rem;
+  margin: 0;
+  text-align: center;
+}
+
+.loading-container p {
+  color: #555;
+  font-size: 1.3rem;
+  margin: 0;
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 60px;
+  height: 60px;
+  border: 6px solid #ff6b6b;
+  border-top: 6px solid transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
