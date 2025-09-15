@@ -1,7 +1,17 @@
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from PIL import Image
 import torch
-from typing import Dict, Any
+import re
+import random
+from typing import Dict, Any, List
+import logging
+
+# Import safety service
+from backend.services.safety_service import safety_service
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class CVService:
     def __init__(self):
@@ -9,35 +19,71 @@ class CVService:
         self.processor = AutoProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
         self.model = AutoModelForVision2Seq.from_pretrained("Salesforce/blip-image-captioning-large")
         
+        # Safe fallback questions
+        self.safe_questions = [
+            "Can you tell me what you drew?",
+            "What colors did you use in your drawing?",
+            "What's your favorite part of your picture?",
+            "Can you describe what you created?",
+            "What story does your drawing tell?"
+        ]
+        
     def analyze_drawing(self, image_path: str) -> Dict[str, Any]:
         """
         Analyzes a drawing using the BLIP model and generates a kid-friendly question.
-        Args:
-            image_path: Path to the image file
-        Returns:
-            Dict containing analysis results and generated question
+        Includes comprehensive safety checks and COPPA compliance.
         """
         try:
             # Load and preprocess image
             raw_image = Image.open(image_path).convert('RGB')
-            inputs = self.processor(raw_image, return_tensors="pt")
+            inputs = self.processor(images=raw_image, return_tensors="pt")
 
-            # Generate caption
+            # Generate caption with safety parameters
             output = self.model.generate(
                 **inputs,
                 max_length=50,
                 num_beams=5,
-                temperature=1.0
+                temperature=0.7,  # Lower temperature for more conservative output
+                do_sample=True,
+                repetition_penalty=1.1
             )
             caption = self.processor.decode(output[0], skip_special_tokens=True)
+            
+            # Safety check on generated caption
+            safety_result = safety_service.check_content_safety(caption, "caption")
+            
+            if not safety_result.is_safe:
+                logger.warning(f"Unsafe caption generated: {caption}")
+                caption = safety_result.sanitized_content
+                
+                # Log safety event
+                safety_service.log_safety_event(
+                    "unsafe_caption",
+                    caption,
+                    safety_result.violations
+                )
 
             # Generate kid-friendly questions based on caption
             questions = self._generate_questions(caption)
-            selected_question = questions[0] if questions else "Can you tell me what you drew?"
+            selected_question = questions[0] if questions else random.choice(self.safe_questions)
             
-            print(f"Generated caption: {caption}")
-            print(f"Generated questions: {questions}")
-            print(f"Selected question: {selected_question}")
+            # Safety check on selected question
+            question_safety = safety_service.check_content_safety(selected_question, "question")
+            
+            if not question_safety.is_safe:
+                logger.warning(f"Unsafe question generated: {selected_question}")
+                selected_question = question_safety.sanitized_content
+                
+                # Log safety event
+                safety_service.log_safety_event(
+                    "unsafe_question",
+                    selected_question,
+                    question_safety.violations
+                )
+            
+            logger.info(f"Generated caption: {caption}")
+            logger.info(f"Generated questions: {questions}")
+            logger.info(f"Selected question: {selected_question}")
 
             return {
                 "caption": caption,
@@ -46,21 +92,19 @@ class CVService:
             }
 
         except Exception as e:
-            print(f"Error analyzing drawing: {str(e)}")
+            logger.error(f"Error analyzing drawing: {str(e)}")
             return {
-                "caption": "",
-                "question": "Can you tell me what you drew?",  # Fallback question
+                "caption": "a drawing",
+                "question": random.choice(self.safe_questions),
                 "success": False,
                 "error": str(e)
             }
 
-    def _generate_questions(self, caption: str) -> list[str]:
+    def _generate_questions(self, caption: str) -> List[str]:
         """
         Generates kid-friendly questions based on the image caption.
         Questions are designed for ages 5-9 and focus on counting, colors, and simple observations.
         """
-        import random
-        
         # Extract key words from caption for more specific questions
         caption_lower = caption.lower()
         

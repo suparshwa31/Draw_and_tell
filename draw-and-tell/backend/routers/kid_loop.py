@@ -5,18 +5,25 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 import os
+import logging
 
 from backend.services.prompt_service import prompt_service
 from backend.services.asr_service import asr_service
 from backend.utils.local_storage import local_storage
 from backend.services.cv_service import cv_service
 from backend.services.tts_service import tts_service
+from backend.services.safety_service import safety_service
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 def generate_response_to_answer(transcript: str, analysis_context: dict) -> str:
     """
     Generate a kid-friendly response based on the child's answer and drawing analysis.
+    Includes safety checks and COPPA compliance.
     
     Args:
         transcript: The child's transcribed answer
@@ -25,6 +32,20 @@ def generate_response_to_answer(transcript: str, analysis_context: dict) -> str:
     Returns:
         str: A kid-friendly response
     """
+    # Safety check on transcript first
+    safety_result = safety_service.check_content_safety(transcript, "transcript")
+    
+    if not safety_result.is_safe:
+        logger.warning(f"Unsafe transcript detected: {transcript}")
+        # Log safety event
+        safety_service.log_safety_event(
+            "unsafe_transcript",
+            transcript,
+            safety_result.violations
+        )
+        # Use sanitized transcript
+        transcript = safety_result.sanitized_content
+    
     # Simple template-based response generation
     # In a more sophisticated version, this could use an LLM
     
@@ -34,7 +55,7 @@ def generate_response_to_answer(transcript: str, analysis_context: dict) -> str:
     
     # Generate encouraging responses based on content
     responses = [
-        f"That sounds amazing! I love how you described {caption}!",
+        f"That sounds amazing! I love how you described your drawing!",
         f"Wow! You did such a great job explaining your drawing!",
         f"That's so creative! I can tell you put a lot of thought into it!",
         f"Fantastic! Your drawing sounds really special!",
@@ -42,7 +63,7 @@ def generate_response_to_answer(transcript: str, analysis_context: dict) -> str:
         f"That's wonderful! You're such a talented artist!"
     ]
     
-    # Add specific responses based on what they mentioned
+    # Add specific responses based on what they mentioned (safely)
     if any(word in transcript.lower() for word in ['color', 'colors', 'colored']):
         responses.append("I love all the colors you used! They make your drawing so vibrant!")
     
@@ -54,7 +75,23 @@ def generate_response_to_answer(transcript: str, analysis_context: dict) -> str:
     
     # Return a random response
     import random
-    return random.choice(responses)
+    selected_response = random.choice(responses)
+    
+    # Final safety check on the response
+    response_safety = safety_service.check_content_safety(selected_response, "response")
+    
+    if not response_safety.is_safe:
+        logger.warning(f"Unsafe response generated: {selected_response}")
+        selected_response = response_safety.sanitized_content
+        
+        # Log safety event
+        safety_service.log_safety_event(
+            "unsafe_response",
+            selected_response,
+            response_safety.violations
+        )
+    
+    return selected_response
 
 class DrawingAnalysis(BaseModel):
     """Analysis results from the CV model"""
@@ -119,15 +156,24 @@ async def analyze_drawing(
     prompt: str = Form(...)
 ):
     try:
+        # Safety check on prompt
+        prompt_safety = safety_service.check_content_safety(prompt, "prompt")
+        if not prompt_safety.is_safe:
+            logger.warning(f"Unsafe prompt detected: {prompt}")
+            safety_service.log_safety_event(
+                "unsafe_prompt",
+                prompt,
+                prompt_safety.violations
+            )
+            prompt = prompt_safety.sanitized_content
+
         # Read image
         image_data = await image.read()
         temp_path = f"/tmp/drawing_{image.filename}"
         with open(temp_path, "wb") as buffer:
             buffer.write(image_data)
 
-        
         result = cv_service.analyze_drawing(temp_path)
-
         os.remove(temp_path)
 
         if not result["success"]:
@@ -141,7 +187,30 @@ async def analyze_drawing(
 
         session_id = local_storage.create_session(prompt)
 
-        # Save drawing
+        # Save drawing with COPPA compliance check
+        drawing_data = {
+            "session_id": session_id,
+            "image_data": image_data,
+            "caption": result["caption"],
+            "analysis": {
+                "caption": result["caption"],
+                "objects_detected": [result["caption"]],
+                "colors_used": [],
+                "confidence_score": 1.0
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Validate data collection for COPPA compliance
+        is_compliant, violations = safety_service.validate_data_collection(drawing_data)
+        if not is_compliant:
+            logger.warning(f"COPPA compliance violations: {violations}")
+            safety_service.log_safety_event(
+                "coppa_violation",
+                str(drawing_data),
+                violations
+            )
+
         drawing_id = local_storage.save_drawing(
             session_id=session_id,
             image_data=image_data,
@@ -158,7 +227,7 @@ async def analyze_drawing(
         try:
             question_audio = tts_service.generate_question_audio(result["question"])
         except Exception as e:
-            print(f"Error generating question audio: {str(e)}")
+            logger.error(f"Error generating question audio: {str(e)}")
             question_audio = None
 
         # Save the generated question
@@ -175,7 +244,7 @@ async def analyze_drawing(
             question_audio_b64 = base64.b64encode(question_audio).decode('utf-8')
 
         # ✅ Return IDs along with question for frontend
-        print(f"Returning question to frontend: {result['question']}")
+        logger.info(f"Returning question to frontend: {result['question']}")
         return {
             "question": result["question"],
             "drawingId": str(drawing_id),
@@ -185,7 +254,7 @@ async def analyze_drawing(
         }
 
     except Exception as e:
-        print(f"Error analyzing drawing: {str(e)}")
+        logger.error(f"Error analyzing drawing: {str(e)}")
         return {
             "question": "Can you tell me about what you drew?",
             "drawingId": None,
@@ -204,6 +273,7 @@ async def transcribe_answer(
     """
     Transcribes the child's recorded audio answer using the Whisper model.
     Saves both the audio and transcript in the local database.
+    Includes comprehensive safety checks and COPPA compliance.
     """
     try:
         # Read the audio file
@@ -212,9 +282,24 @@ async def transcribe_answer(
         # Validate audio format
         if not audio.content_type.startswith('audio/'):
             raise HTTPException(status_code=400, detail="File must be an audio recording")
+        
+        # Check audio file size for COPPA compliance (max 10MB)
+        if len(audio_data) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Audio file too large")
             
         # ✅ Use the instance here
         transcript, confidence = asr_service.transcribe_audio(audio_data)
+        
+        # Safety check on transcript
+        transcript_safety = safety_service.check_content_safety(transcript, "transcript")
+        if not transcript_safety.is_safe:
+            logger.warning(f"Unsafe transcript detected: {transcript}")
+            safety_service.log_safety_event(
+                "unsafe_transcript",
+                transcript,
+                transcript_safety.violations
+            )
+            transcript = transcript_safety.sanitized_content
         
         # Generate response based on transcript and drawing analysis
         try:
@@ -229,9 +314,29 @@ async def transcribe_answer(
             response_audio = tts_service.generate_response_audio(response_text)
             
         except Exception as e:
-            print(f"Error generating response: {str(e)}")
+            logger.error(f"Error generating response: {str(e)}")
             response_text = "That's wonderful! Thank you for sharing your drawing with me!"
             response_audio = None
+        
+        # COPPA compliance check for data collection
+        answer_data = {
+            "drawing_id": drawing_id,
+            "question_id": question_id,
+            "answer": transcript,
+            "answer_audio": audio_data,
+            "response": response_text,
+            "response_audio": response_audio,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        is_compliant, violations = safety_service.validate_data_collection(answer_data)
+        if not is_compliant:
+            logger.warning(f"COPPA compliance violations in answer: {violations}")
+            safety_service.log_safety_event(
+                "coppa_violation_answer",
+                str(answer_data),
+                violations
+            )
         
         # Save answer in database
         def save_answer():
@@ -245,7 +350,7 @@ async def transcribe_answer(
                     response_audio=response_audio
                 )
             except Exception as e:
-                print(f"Error saving answer: {str(e)}")
+                logger.error(f"Error saving answer: {str(e)}")
         
         # Run database save in background
         background_tasks.add_task(save_answer)
@@ -265,7 +370,7 @@ async def transcribe_answer(
         )
         
     except Exception as e:
-        print(f"Error transcribing audio: {str(e)}")
+        logger.error(f"Error transcribing audio: {str(e)}")
         return TranscriptionResponse(
             transcript="",
             confidence=0.0,
