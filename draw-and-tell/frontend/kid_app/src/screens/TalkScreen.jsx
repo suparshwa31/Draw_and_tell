@@ -19,6 +19,7 @@ function TalkScreen() {
   const [response, setResponse] = useState(null);
   const [responseAudio, setResponseAudio] = useState(null);
   const [showResponse, setShowResponse] = useState(false);
+  const [questionAudioPlayed, setQuestionAudioPlayed] = useState(false);
   const audioRef = React.useRef(null);
   const responseAudioRef = React.useRef(null);
 
@@ -36,9 +37,9 @@ function TalkScreen() {
     };
   }, [mediaRecorder]);
 
-  // Play the question audio when it's available
+  // Play the question audio when it's available (only once)
   useEffect(() => {
-    if (questionAudio && audioRef.current) {
+    if (questionAudio && audioRef.current && !questionAudioPlayed) {
       console.log('Setting up audio playback...'); // Debug log
       
       const playAudio = async () => {
@@ -63,7 +64,10 @@ function TalkScreen() {
             console.error('Audio error code:', audio.error?.code);
             console.error('Audio error message:', audio.error?.message);
           };
-          audio.onplay = () => console.log('Audio started playing');
+          audio.onplay = () => {
+            console.log('Audio started playing');
+            setQuestionAudioPlayed(true); // Mark as played when it starts
+          };
           audio.onended = () => console.log('Audio finished playing');
           
           // Set MIME type and source
@@ -88,7 +92,7 @@ function TalkScreen() {
       
       playAudio();
     }
-  }, [questionAudio]);
+  }, [questionAudio, questionAudioPlayed]);
 
   // Play the response audio when it's available
   useEffect(() => {
@@ -300,19 +304,6 @@ function TalkScreen() {
                 <>
                   <div className={`question-bubble ${isRecording ? 'emphasis' : ''}`}>
                     {question || "Tell me about what you drew!"}
-                    {questionAudio && (
-                      <button
-                        onClick={() => {
-                          audioRef.current?.play().catch(e => {
-                            console.error('Manual play error:', e);
-                          });
-                        }}
-                        className="replay-audio-button"
-                        title="Replay question"
-                      >
-                        🔊 Play Question
-                      </button>
-                    )}
                   </div>
 
                   <div className="controls-container">
@@ -339,19 +330,6 @@ function TalkScreen() {
                 <>
                   <div className="response-bubble">
                     {response}
-                    {responseAudio && (
-                      <button
-                        onClick={() => {
-                          responseAudioRef.current?.play().catch(e => {
-                            console.error('Manual play error:', e);
-                          });
-                        }}
-                        className="replay-audio-button"
-                        title="Replay response"
-                      >
-                        🔊 Play Response
-                      </button>
-                    )}
                   </div>
 
                   <div className="controls-container">

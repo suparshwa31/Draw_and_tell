@@ -68,6 +68,7 @@ class QuestionResponse(BaseModel):
     analysis: DrawingAnalysis = Field(..., description="Analysis results from the CV model")
     drawingId: Optional[str] = None
     questionId: Optional[str] = None
+    questionAudio: Optional[str] = Field(None, description="Base64 encoded audio for the question")
     error: Optional[str] = None
 
 class PromptResponse(BaseModel):
