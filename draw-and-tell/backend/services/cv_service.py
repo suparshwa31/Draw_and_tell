@@ -33,10 +33,15 @@ class CVService:
 
             # Generate kid-friendly questions based on caption
             questions = self._generate_questions(caption)
+            selected_question = questions[0] if questions else "Can you tell me what you drew?"
+            
+            print(f"Generated caption: {caption}")
+            print(f"Generated questions: {questions}")
+            print(f"Selected question: {selected_question}")
 
             return {
                 "caption": caption,
-                "question": questions[0],  # Return first question for simplicity
+                "question": selected_question,
                 "success": True
             }
 
@@ -52,16 +57,95 @@ class CVService:
     def _generate_questions(self, caption: str) -> list[str]:
         """
         Generates kid-friendly questions based on the image caption.
+        Questions are designed for ages 5-9 and focus on counting, colors, and simple observations.
         """
-        # Simple template-based question generation
-        templates = [
-            f"I see {caption}! What's your favorite part of your drawing?",
-            f"Wow! Can you tell me more about {caption}?",
-            f"That looks interesting! Why did you decide to draw {caption}?",
-            f"I love how you drew {caption}! What's happening in your picture?"
+        import random
+        
+        # Extract key words from caption for more specific questions
+        caption_lower = caption.lower()
+        
+        # Count-based questions
+        count_questions = [
+            "How many things can you count in your drawing?",
+            "Can you count all the objects you drew?",
+            "What number of items did you draw?",
+            "How many different things do you see in your picture?"
         ]
         
-        return templates[:2]  # Return first two questions
+        # Color-based questions
+        color_questions = [
+            "What colors did you use in your drawing?",
+            "Can you tell me about the colors you chose?",
+            "What's your favorite color in your picture?",
+            "Which colors make you happy in your drawing?"
+        ]
+        
+        # Size-based questions
+        size_questions = [
+            "Are the things in your drawing big or small?",
+            "What's the biggest thing you drew?",
+            "What's the smallest thing in your picture?",
+            "Can you tell me about the sizes of things you drew?"
+        ]
+        
+        # Location-based questions
+        location_questions = [
+            "Where are the things in your drawing?",
+            "What's happening in your picture?",
+            "Can you tell me about the place you drew?",
+            "What's the setting of your drawing?"
+        ]
+        
+        # Specific object questions based on common drawing themes
+        if any(word in caption_lower for word in ['car', 'cars', 'vehicle', 'truck', 'bus']):
+            specific_questions = [
+                "How many cars did you draw?",
+                "What color are the cars in your picture?",
+                "Where are the cars going?",
+                "Can you tell me about the cars you drew?"
+            ]
+        elif any(word in caption_lower for word in ['tree', 'trees', 'plant', 'flower', 'flowers']):
+            specific_questions = [
+                "How many trees or flowers did you draw?",
+                "What colors are the trees and flowers?",
+                "Where are the trees growing?",
+                "Can you tell me about the nature in your drawing?"
+            ]
+        elif any(word in caption_lower for word in ['animal', 'dog', 'cat', 'bird', 'fish', 'butterfly']):
+            specific_questions = [
+                "How many animals did you draw?",
+                "What animals can you see in your picture?",
+                "What are the animals doing?",
+                "Can you tell me about the animals you drew?"
+            ]
+        elif any(word in caption_lower for word in ['house', 'building', 'home', 'castle']):
+            specific_questions = [
+                "How many buildings did you draw?",
+                "What kind of house or building is this?",
+                "What's around the building?",
+                "Can you tell me about the place you drew?"
+            ]
+        elif any(word in caption_lower for word in ['person', 'people', 'boy', 'girl', 'child']):
+            specific_questions = [
+                "How many people did you draw?",
+                "What are the people doing?",
+                "Can you tell me about the people in your picture?",
+                "What are the people wearing?"
+            ]
+        else:
+            # Generic questions for other content
+            specific_questions = [
+                "What's the main thing in your drawing?",
+                "Can you tell me what you drew?",
+                "What's your favorite part of your picture?",
+                "What story does your drawing tell?"
+            ]
+        
+        # Combine all question types
+        all_questions = count_questions + color_questions + size_questions + location_questions + specific_questions
+        
+        # Return 3 random questions
+        return random.sample(all_questions, min(3, len(all_questions)))
 
 # Initialize service
 cv_service = CVService()

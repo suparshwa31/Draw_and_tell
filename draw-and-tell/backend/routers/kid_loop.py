@@ -175,6 +175,7 @@ async def analyze_drawing(
             question_audio_b64 = base64.b64encode(question_audio).decode('utf-8')
 
         # ✅ Return IDs along with question for frontend
+        print(f"Returning question to frontend: {result['question']}")
         return {
             "question": result["question"],
             "drawingId": str(drawing_id),

@@ -123,6 +123,7 @@ function TalkScreen() {
       }
 
       setQuestion(generatedQuestion);
+      console.log('Question received in TalkScreen:', generatedQuestion);
       
       // Convert base64 audio data to blob URL if available
       if (audioData) {
