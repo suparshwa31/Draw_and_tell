@@ -103,8 +103,8 @@ class QuestionResponse(BaseModel):
     """Response model for the /analyze-drawing endpoint"""
     question: str = Field(..., description="Follow-up question based on the drawing analysis")
     analysis: DrawingAnalysis = Field(..., description="Analysis results from the CV model")
-    drawingId: Optional[str] = None
-    questionId: Optional[str] = None
+    drawingId: Optional[int] = None
+    questionId: Optional[int] = None
     questionAudio: Optional[str] = Field(None, description="Base64 encoded audio for the question")
     error: Optional[str] = None
 
@@ -119,7 +119,7 @@ class TranscriptionResponse(BaseModel):
     confidence: float = Field(..., description="Confidence score of the transcription")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     response: Optional[str] = Field(None, description="Generated response to the child's answer")
-    responseAudio: Optional[bytes] = Field(None, description="TTS audio for the response")
+    responseAudio: Optional[str] = Field(None, description="Base64 encoded TTS audio for the response")
     error: Optional[str] = None
 
 @router.get("/prompt", response_model=PromptResponse)
@@ -247,8 +247,8 @@ async def analyze_drawing(
         logger.info(f"Returning question to frontend: {result['question']}")
         return {
             "question": result["question"],
-            "drawingId": str(drawing_id),
-            "questionId": str(question_id),
+            "drawingId": drawing_id,  # Return as integer
+            "questionId": question_id,  # Return as integer
             "analysis": analysis,
             "questionAudio": question_audio_b64
         }
@@ -257,8 +257,8 @@ async def analyze_drawing(
         logger.error(f"Error analyzing drawing: {str(e)}")
         return {
             "question": "Can you tell me about what you drew?",
-            "drawingId": None,
-            "questionId": None,
+            "drawingId": 0,  # Return 0 instead of None
+            "questionId": 0,  # Return 0 instead of None
             "analysis": DrawingAnalysis(),
             "error": str(e)
         }

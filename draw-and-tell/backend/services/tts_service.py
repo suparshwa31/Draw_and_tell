@@ -3,6 +3,8 @@ import numpy as np
 import io
 import re
 import logging
+import hashlib
+from functools import lru_cache
 from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
 from datasets import load_dataset
 import soundfile as sf
@@ -41,11 +43,110 @@ class TTSService:
             self.model.eval()
             self.vocoder.eval()
             
+            # Apply performance optimizations
+            self._apply_optimizations()
+            
             logger.info(f"✅ TTS Service initialized on {self.device}")
             
         except Exception as e:
             logger.error(f"Failed to initialize TTS service: {e}")
             raise
+
+    def _apply_optimizations(self):
+        """Apply performance optimizations to reduce latency"""
+        try:
+            # Enable optimizations for faster inference
+            if torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+                logger.info("🚀 Enabled CUDA optimizations")
+            
+            # Try to compile models for faster inference (PyTorch 2.0+)
+            if hasattr(torch, 'compile'):
+                try:
+                    self.model = torch.compile(self.model, mode="reduce-overhead")
+                    self.vocoder = torch.compile(self.vocoder, mode="reduce-overhead")
+                    logger.info("🚀 Compiled models with torch.compile")
+                except Exception as e:
+                    logger.warning(f"Could not compile models: {e}")
+            
+            # Set optimal memory format for GPU
+            if self.device != "cpu":
+                try:
+                    self.model = self.model.to(memory_format=torch.channels_last)
+                    self.vocoder = self.vocoder.to(memory_format=torch.channels_last)
+                    logger.info("🚀 Optimized memory format")
+                except Exception as e:
+                    logger.warning(f"Could not optimize memory format: {e}")
+            
+            # Set maximum text length for faster processing
+            self.max_text_length = 200  # Reduced from 500
+            
+            logger.info("✅ Performance optimizations applied")
+            
+        except Exception as e:
+            logger.warning(f"Could not apply all optimizations: {e}")
+
+    def _get_text_hash(self, text: str) -> str:
+        """Generate a hash for text caching"""
+        return hashlib.md5(text.encode('utf-8')).hexdigest()
+
+    @lru_cache(maxsize=50)
+    def _cached_tts_generation(self, text_hash: str, text: str) -> bytes:
+        """Cached TTS generation for repeated texts"""
+        return self._generate_audio_internal(text)
+
+    def _generate_audio_internal(self, text: str) -> Optional[bytes]:
+        """Internal audio generation without caching"""
+        try:
+            # Preprocess text with optimizations
+            inputs = self.processor(text=text, return_tensors="pt")
+            inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
+            
+            # Generate speech with optimizations
+            with torch.no_grad():
+                # Use mixed precision if available on GPU
+                if self.device != "cpu" and hasattr(torch.cuda, 'amp'):
+                    with torch.cuda.amp.autocast():
+                        speech = self.model.generate_speech(
+                            inputs["input_ids"], 
+                            self.speaker_embeddings, 
+                            vocoder=self.vocoder
+                        )
+                else:
+                    speech = self.model.generate_speech(
+                        inputs["input_ids"], 
+                        self.speaker_embeddings, 
+                        vocoder=self.vocoder
+                    )
+            
+            # Convert to numpy array and normalize safely
+            speech = speech.cpu().numpy()
+            
+            # Check for NaN or infinite values
+            if np.any(np.isnan(speech)) or np.any(np.isinf(speech)):
+                logger.warning("Generated speech contains NaN or infinite values")
+                return None
+            
+            # Normalize audio safely
+            max_val = np.max(np.abs(speech))
+            if max_val > 0:
+                speech = speech / max_val
+            else:
+                logger.warning("Generated speech has zero amplitude")
+                return None
+            
+            # Convert to WAV bytes with optimized settings
+            wav_io = io.BytesIO()
+            sf.write(wav_io, speech, 16000, format='WAV', subtype='PCM_16')
+            wav_io.seek(0)
+            audio_data = wav_io.getvalue()
+            
+            return audio_data
+            
+        except Exception as e:
+            logger.error(f"Error in internal audio generation: {str(e)}")
+            return None
 
     def _sanitize_text(self, text: str) -> str:
         """Sanitize text input for TTS generation"""
@@ -70,8 +171,9 @@ class TTSService:
             )
         
         # Limit text length to prevent extremely long audio
-        if len(text) > 500:
-            text = text[:500] + "..."
+        max_length = getattr(self, 'max_text_length', 200)
+        if len(text) > max_length:
+            text = text[:max_length] + "..."
             logger.warning(f"Text truncated for TTS: {len(text)} characters")
         
         return text.strip()
@@ -107,12 +209,13 @@ class TTSService:
             logger.error(f"Audio validation failed: {e}")
             return False
 
-    def text_to_speech(self, text: str) -> Optional[bytes]:
+    def text_to_speech(self, text: str, text_type: str = "unknown") -> Optional[bytes]:
         """
         Convert text to speech using SpeechT5 models with safety checks.
         
         Args:
             text: The text to convert to speech
+            text_type: Type of text ("question" or "response")
             
         Returns:
             bytes: WAV audio data, or None if generation fails
@@ -125,39 +228,24 @@ class TTSService:
                 logger.warning("No safe text to convert to speech")
                 return None
             
-            # Preprocess text
-            inputs = self.processor(text=safe_text, return_tensors="pt")
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            # Check cache first for repeated texts
+            text_hash = self._get_text_hash(safe_text)
+            cached_audio = self._cached_tts_generation(text_hash, safe_text)
             
-            # Generate speech with safety parameters
-            with torch.no_grad():
-                speech = self.model.generate_speech(
-                    inputs["input_ids"], 
-                    self.speaker_embeddings, 
-                    vocoder=self.vocoder
-                )
+            if cached_audio:
+                logger.debug(f"Using cached audio for text: {safe_text[:30]}...")
+                # Validate cached audio
+                if self._validate_audio_output(cached_audio):
+                    return cached_audio
+                else:
+                    logger.warning("Cached audio failed validation, regenerating")
             
-            # Convert to numpy array and normalize safely
-            speech = speech.cpu().numpy()
+            # Generate new audio if not cached or validation failed
+            audio_data = self._generate_audio_internal(safe_text)
             
-            # Check for NaN or infinite values
-            if np.any(np.isnan(speech)) or np.any(np.isinf(speech)):
-                logger.warning("Generated speech contains NaN or infinite values")
+            if not audio_data:
+                logger.warning("Failed to generate audio")
                 return None
-            
-            # Normalize audio safely
-            max_val = np.max(np.abs(speech))
-            if max_val > 0:
-                speech = speech / max_val
-            else:
-                logger.warning("Generated speech has zero amplitude")
-                return None
-            
-            # Convert to WAV bytes
-            wav_io = io.BytesIO()
-            sf.write(wav_io, speech, 16000, format='WAV')
-            wav_io.seek(0)
-            audio_data = wav_io.getvalue()
             
             # Validate generated audio
             if not self._validate_audio_output(audio_data):
@@ -179,7 +267,7 @@ class TTSService:
             
         # Don't add extra text to questions - keep them clean
         safe_question = self._sanitize_text(question)
-        return self.text_to_speech(safe_question)
+        return self.text_to_speech(safe_question, text_type="question")
 
     def generate_response_audio(self, response: str) -> Optional[bytes]:
         """
@@ -191,7 +279,28 @@ class TTSService:
         # Add encouraging phrases safely
         enhanced_response = f"Wow! {response} That's amazing!"
         safe_response = self._sanitize_text(enhanced_response)
-        return self.text_to_speech(safe_response)
+        return self.text_to_speech(safe_response, text_type="response")
+
+    def clear_cache(self):
+        """Clear the TTS cache to free memory"""
+        self._cached_tts_generation.cache_clear()
+        logger.info("🧹 TTS cache cleared")
+
+    def get_cache_info(self):
+        """Get cache statistics"""
+        cache_info = self._cached_tts_generation.cache_info()
+        return {
+            "hits": cache_info.hits,
+            "misses": cache_info.misses,
+            "current_size": cache_info.currsize,
+            "max_size": cache_info.maxsize
+        }
+
+    def optimize_memory(self):
+        """Optimize memory usage"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("🧹 Memory optimized")
 
 # Initialize service
 tts_service = TTSService()

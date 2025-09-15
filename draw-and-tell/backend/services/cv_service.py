@@ -5,6 +5,8 @@ import re
 import random
 from typing import Dict, Any, List
 import logging
+import time
+from functools import lru_cache
 
 # Import safety service
 from backend.services.safety_service import safety_service
@@ -15,9 +17,12 @@ logger = logging.getLogger(__name__)
 
 class CVService:
     def __init__(self):
-        # Load model and processor
+        # Load model and processor with optimizations
         self.processor = AutoProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
         self.model = AutoModelForVision2Seq.from_pretrained("Salesforce/blip-image-captioning-large")
+        
+        # Apply performance optimizations
+        self._apply_optimizations()
         
         # Safe fallback questions
         self.safe_questions = [
@@ -28,25 +33,68 @@ class CVService:
             "What story does your drawing tell?"
         ]
         
+    def _apply_optimizations(self):
+        """Apply performance optimizations to reduce inference time"""
+        try:
+            # Set device
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model = self.model.to(self.device)
+            
+            # Enable optimizations
+            if torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+                logger.info("🚀 Enabled CUDA optimizations for CV service")
+            
+            # Try to compile model for faster inference (PyTorch 2.0+)
+            if hasattr(torch, 'compile'):
+                try:
+                    self.model = torch.compile(self.model, mode="reduce-overhead")
+                    logger.info("🚀 Compiled CV model with torch.compile")
+                except Exception as e:
+                    logger.warning(f"Could not compile CV model: {e}")
+            
+            # Set model to evaluation mode
+            self.model.eval()
+            
+            # Optimize generation parameters for speed
+            self.generation_config = {
+                "max_length": 30,  # Reduced from 50
+                "num_beams": 3,    # Reduced from 5
+                "temperature": 0.8,
+                "do_sample": True,
+                "repetition_penalty": 1.05,
+                "early_stopping": True
+            }
+            
+            logger.info("✅ CV Service optimizations applied")
+            
+        except Exception as e:
+            logger.warning(f"Could not apply all CV optimizations: {e}")
+        
     def analyze_drawing(self, image_path: str) -> Dict[str, Any]:
         """
         Analyzes a drawing using the BLIP model and generates a kid-friendly question.
         Includes comprehensive safety checks and COPPA compliance.
         """
+        start_time = time.time()
+        
         try:
-            # Load and preprocess image
+            # Load and preprocess image with optimizations
             raw_image = Image.open(image_path).convert('RGB')
+            
+            # Resize image if too large (faster processing)
+            max_size = 512
+            if max(raw_image.size) > max_size:
+                raw_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
             inputs = self.processor(images=raw_image, return_tensors="pt")
+            inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
 
-            # Generate caption with safety parameters
-            output = self.model.generate(
-                **inputs,
-                max_length=50,
-                num_beams=5,
-                temperature=0.7,  # Lower temperature for more conservative output
-                do_sample=True,
-                repetition_penalty=1.1
-            )
+            # Generate caption with optimized parameters
+            with torch.no_grad():
+                output = self.model.generate(**inputs, **self.generation_config)
+            
             caption = self.processor.decode(output[0], skip_special_tokens=True)
             
             # Safety check on generated caption
@@ -81,14 +129,17 @@ class CVService:
                     question_safety.violations
                 )
             
+            processing_time = (time.time() - start_time) * 1000
             logger.info(f"Generated caption: {caption}")
             logger.info(f"Generated questions: {questions}")
             logger.info(f"Selected question: {selected_question}")
+            logger.info(f"⏱️ CV analysis completed in {processing_time:.0f}ms")
 
             return {
                 "caption": caption,
                 "question": selected_question,
-                "success": True
+                "success": True,
+                "processing_time_ms": processing_time
             }
 
         except Exception as e:
@@ -100,10 +151,12 @@ class CVService:
                 "error": str(e)
             }
 
+    @lru_cache(maxsize=100)
     def _generate_questions(self, caption: str) -> List[str]:
         """
         Generates kid-friendly questions based on the image caption.
         Questions are designed for ages 5-9 and focus on counting, colors, and simple observations.
+        Uses caching to avoid regenerating questions for similar captions.
         """
         # Extract key words from caption for more specific questions
         caption_lower = caption.lower()
@@ -190,6 +243,27 @@ class CVService:
         
         # Return 3 random questions
         return random.sample(all_questions, min(3, len(all_questions)))
+    
+    def clear_cache(self):
+        """Clear the question generation cache"""
+        self._generate_questions.cache_clear()
+        logger.info("🧹 CV question cache cleared")
+    
+    def get_cache_info(self):
+        """Get cache statistics"""
+        cache_info = self._generate_questions.cache_info()
+        return {
+            "hits": cache_info.hits,
+            "misses": cache_info.misses,
+            "current_size": cache_info.currsize,
+            "max_size": cache_info.maxsize
+        }
+    
+    def optimize_memory(self):
+        """Optimize memory usage"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("🧹 CV memory optimized")
 
 # Initialize service
 cv_service = CVService()

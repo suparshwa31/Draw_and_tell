@@ -210,7 +210,7 @@ function TalkScreen() {
 
       // Get drawing_id and question_id from location.state or wherever they are stored
       const { drawingId, questionId } = location.state || {};
-      if (!drawingId || !questionId) {
+      if (!drawingId || !questionId || drawingId === 0 || questionId === 0) {
         setError('Missing drawing or question ID.');
         console.error('Missing IDs:', { drawingId, questionId, locationState: location.state });
         return;
