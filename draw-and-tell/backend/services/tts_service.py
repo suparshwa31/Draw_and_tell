@@ -21,8 +21,8 @@ class TTSService:
     def __init__(self):
         try:
             # Load TTS models
-            self.processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
-            self.model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts")
+            self.processor = SpeechT5Processor.from_pretrained("sjdata/speecht5_finetuned_single_speaker_de_small_librivox")
+            self.model = SpeechT5ForTextToSpeech.from_pretrained("sjdata/speecht5_finetuned_single_speaker_de_small_librivox")
             self.vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan")
             
             # Load speaker embeddings for better voice quality
@@ -53,39 +53,50 @@ class TTSService:
             raise
 
     def _apply_optimizations(self):
-        """Apply performance optimizations to reduce latency"""
+        """Apply performance optimizations for low-latency TTS"""
         try:
-            # Enable optimizations for faster inference
-            if torch.cuda.is_available():
+            # Use GPU if available
+            self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            
+            # Move models to device
+            self.model = self.model.to(self.device)
+            self.vocoder = self.vocoder.to(self.device)
+            self.speaker_embeddings = self.speaker_embeddings.to(self.device)
+            
+            # Use half precision on GPU
+            if self.device != "cpu":
+                self.model = self.model.half()
+                self.vocoder = self.vocoder.half()
                 torch.backends.cudnn.benchmark = True
                 torch.backends.cudnn.deterministic = False
-                logger.info("🚀 Enabled CUDA optimizations")
+                logger.info("🚀 Enabled fp16 and CUDA optimizations")
             
-            # Try to compile models for faster inference (PyTorch 2.0+)
-            if hasattr(torch, 'compile'):
+            # Set channels_last memory format for GPU
+            if self.device != "cpu":
+                try:
+                    self.model = self.model.to(memory_format=torch.channels_last)
+                    self.vocoder = self.vocoder.to(memory_format=torch.channels_last)
+                    logger.info("🚀 Optimized memory format (channels_last)")
+                except Exception as e:
+                    logger.warning(f"Memory format optimization failed: {e}")
+            
+            # Compile models (PyTorch 2.0+)
+            if hasattr(torch, "compile"):
                 try:
                     self.model = torch.compile(self.model, mode="reduce-overhead")
                     self.vocoder = torch.compile(self.vocoder, mode="reduce-overhead")
                     logger.info("🚀 Compiled models with torch.compile")
                 except Exception as e:
-                    logger.warning(f"Could not compile models: {e}")
+                    logger.warning(f"Model compilation failed: {e}")
             
-            # Set optimal memory format for GPU
-            if self.device != "cpu":
-                try:
-                    self.model = self.model.to(memory_format=torch.channels_last)
-                    self.vocoder = self.vocoder.to(memory_format=torch.channels_last)
-                    logger.info("🚀 Optimized memory format")
-                except Exception as e:
-                    logger.warning(f"Could not optimize memory format: {e}")
+            # Reduce max text length to limit processing
+            self.max_text_length = 150
             
-            # Set maximum text length for faster processing
-            self.max_text_length = 200  # Reduced from 500
-            
-            logger.info("✅ Performance optimizations applied")
-            
+            logger.info("✅ TTS performance optimizations applied")
+        
         except Exception as e:
-            logger.warning(f"Could not apply all optimizations: {e}")
+            logger.warning(f"Failed to fully optimize TTS models: {e}")
+
 
     def _get_text_hash(self, text: str) -> str:
         """Generate a hash for text caching"""
