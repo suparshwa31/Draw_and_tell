@@ -4,6 +4,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import os
+from collections import Counter
+import sqlite3
 
 from backend.utils.local_storage import local_storage
 from backend.services.tts_service import tts_service
@@ -30,7 +32,6 @@ class ParentRecap(BaseModel):
 
 @router.get("/sessions", response_model=List[ParentSessionSummary])
 def list_sessions() -> List[ParentSessionSummary]:
-    import sqlite3
     db_path = local_storage.db_path
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -113,7 +114,7 @@ def recap(session_id: int) -> ParentRecap:
         skills.append("Creative Expression & Imagination")
 
     # Generate top tags
-    from collections import Counter
+    
     tag_counts = Counter(all_tags)
     top_tags = [t for t, _ in tag_counts.most_common(5)]
 
@@ -173,73 +174,3 @@ def get_image(drawing_id: int):
     if not image_path or not os.path.exists(image_path):
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(image_path, media_type="image/png")
-
-
-
-
-
-
-@router.get("/tts-cache")
-def get_tts_cache_info():
-    """Get TTS cache statistics"""
-    try:
-        cache_info = tts_service.get_cache_info()
-        return {
-            "cache_info": cache_info,
-            "hit_rate": cache_info["hits"] / (cache_info["hits"] + cache_info["misses"]) if (cache_info["hits"] + cache_info["misses"]) > 0 else 0
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/tts-cache/clear")
-def clear_tts_cache():
-    """Clear TTS cache"""
-    try:
-        tts_service.clear_cache()
-        return {"message": "TTS cache cleared successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/cv-cache")
-def get_cv_cache_info():
-    """Get CV cache statistics"""
-    try:
-        cache_info = cv_service.get_cache_info()
-        return {
-            "cache_info": cache_info,
-            "hit_rate": cache_info["hits"] / (cache_info["hits"] + cache_info["misses"]) if (cache_info["hits"] + cache_info["misses"]) > 0 else 0
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/cv-cache/clear")
-def clear_cv_cache():
-    """Clear CV cache"""
-    try:
-        cv_service.clear_cache()
-        return {"message": "CV cache cleared successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/cv-optimize")
-def optimize_cv_memory():
-    """Optimize CV memory usage"""
-    try:
-        cv_service.optimize_memory()
-        return {"message": "CV memory optimized successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/tts-optimize")
-def optimize_tts_memory():
-    """Optimize TTS memory usage"""
-    try:
-        tts_service.optimize_memory()
-        return {"message": "TTS memory optimized successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

@@ -6,6 +6,8 @@ from typing import Optional, List
 from datetime import datetime
 import os
 import logging
+import base64
+import random
 
 from backend.services.prompt_service import prompt_service
 from backend.services.asr_service import asr_service
@@ -74,7 +76,6 @@ def generate_response_to_answer(transcript: str, analysis_context: dict) -> str:
         responses.append("The size details you mentioned make your drawing sound really interesting!")
     
     # Return a random response
-    import random
     selected_response = random.choice(responses)
     
     # Final safety check on the response
@@ -240,7 +241,7 @@ async def analyze_drawing(
         # Convert audio to base64 for JSON response
         question_audio_b64 = None
         if question_audio:
-            import base64
+            
             question_audio_b64 = base64.b64encode(question_audio).decode('utf-8')
 
         # ✅ Return IDs along with question for frontend
@@ -358,7 +359,6 @@ async def transcribe_answer(
         # Convert response audio to base64 for JSON response
         response_audio_b64 = None
         if response_audio:
-            import base64
             response_audio_b64 = base64.b64encode(response_audio).decode('utf-8')
 
         return TranscriptionResponse(
