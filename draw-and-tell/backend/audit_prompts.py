@@ -8,11 +8,12 @@ import sys
 import os
 import json
 from datetime import datetime
+from services.safety_service import safety_service
 
 # Add the backend directory to the path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from services.safety_service import safety_service
+
 
 def run_prompt_audit():
     """Run comprehensive prompt audit tests"""

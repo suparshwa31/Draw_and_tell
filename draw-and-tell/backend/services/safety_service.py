@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
 
+import random
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -327,7 +329,6 @@ class COPPAComplianceService:
             "Can you describe what you created?",
             "What story does your drawing tell?"
         ]
-        import random
         return random.choice(safe_fallbacks)
 
     def audit_prompts(self) -> Dict[str, Any]:
